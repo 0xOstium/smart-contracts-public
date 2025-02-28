@@ -1,4 +1,4 @@
-# Ostium V1
+# Ostium V2
 
 This repository contains the core smart contracts for the Ostium V2 protocol and uses [Hardhat](https://github.com/NomicFoundation/hardhat) as development environment for compilation.
 
