@@ -1,6 +1,6 @@
 # Ostium V1
 
-This repository contains the core smart contracts for the Ostium V1 protocol and uses [Hardhat](https://github.com/NomicFoundation/hardhat) as development environment for compilation.
+This repository contains the core smart contracts for the Ostium V2 protocol and uses [Hardhat](https://github.com/NomicFoundation/hardhat) as development environment for compilation.
 
 ## What is Ostium
 
