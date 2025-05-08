@@ -54,6 +54,7 @@ interface IOstiumPairInfos {
 
     event ManagerUpdated(address value);
     event LiqThresholdPUpdated(uint256 value);
+    event LiqMarginThresholdPUpdated(uint256 value);
     event MaxNegativePnlOnOpenPUpdated(uint256 value);
     event VaultFeePercentUpdated(uint16 indexed pairIndex, uint8 value);
     event PairOpeningFeesUpdated(uint16 indexed pairIndex, PairOpeningFees value);
@@ -115,21 +116,21 @@ interface IOstiumPairInfos {
         uint256 openPrice,
         bool long,
         uint256 collateral,
-        uint32 leverage
+        uint32 leverage,
+        uint32 maxLeverage
     ) external view returns (uint256);
     function getTradeValue(
-        uint256 orderId,
-        uint256 tradeId,
         address trader,
         uint16 pairIndex,
         uint8 index,
         bool long,
         uint256 collateral,
         uint32 leverage,
-        int256 percentProfit
-    ) external returns (uint256);
+        int256 percentProfit,
+        uint32 maxLeverage
+    ) external returns (uint256, uint256, uint256, int256);
     function manager() external view returns (address);
-    function liqThresholdP() external view returns (uint8);
+    function liqMarginThresholdP() external view returns (uint8);
     function getOpeningFee(uint16 pairIndex, int256 leveragedPositionSize, uint32 leverage, int256 oiDelta)
         external
         view
@@ -169,12 +170,16 @@ interface IOstiumPairInfos {
         uint256 collateral,
         uint32 leverage,
         uint256 rolloverFee,
-        int256 fundingFee
+        int256 fundingFee,
+        uint32 maxLeverage
     ) external view returns (uint256);
-    function getTradeValuePure(uint256 collateral, int256 percentProfit, uint256 rolloverFee, int256 fundingFee)
-        external
-        view
-        returns (uint256);
+    function getTradeValuePure(
+        uint256 collateral,
+        int256 percentProfit,
+        uint256 rolloverFee,
+        int256 fundingFee,
+        uint256 liqMarginValue
+    ) external view returns (uint256);
     function getRolloverFeePerBlock(uint16 pairIndex) external view returns (uint256);
     function getAccRolloverFees(uint16 pairIndex) external view returns (uint256);
     function getAccRolloverFeesUpdateBlock(uint16 pairIndex) external view returns (uint256);
@@ -189,6 +194,10 @@ interface IOstiumPairInfos {
         external
         view
         returns (int256);
+    function getTradeLiquidationMargin(uint256 collateral, uint32 leverage, uint32 maxLeverage)
+        external
+        view
+        returns (uint256);
 
     // only manager
     function setRolloverFeePerBlock(uint16 pairIndex, uint256 volatility) external;
@@ -196,7 +205,7 @@ interface IOstiumPairInfos {
 
     // only gov
     function setManager(address _manager) external;
-    function setLiqThresholdP(uint256 value) external;
+    function setLiqMarginThresholdP(uint256 value) external;
     function setMaxNegativePnlOnOpenP(uint256 value) external;
     function setPairOpeningFees(uint16 pairIndex, PairOpeningFees memory value) external;
     function setPairOpeningFeesArray(uint16[] memory indices, PairOpeningFees[] memory values) external;

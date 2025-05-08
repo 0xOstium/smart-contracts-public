@@ -34,7 +34,13 @@ abstract contract Delegatable is IDelegatable {
         senderOverride = trader;
         (bool success, bytes memory result) = address(this).delegatecall(call_data);
         if (!success) {
-            revert DelegatedActionFailed();
+            if (result.length > 0) {
+                assembly {
+                    revert(add(result, 0x20), mload(result))
+                }
+            } else {
+                revert DelegatedActionFailed();
+            }
         }
 
         senderOverride = address(0);

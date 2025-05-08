@@ -78,6 +78,9 @@ interface IOstiumTrading {
         uint256 removeAmount,
         string reason
     );
+    event OracleFeeCharged(uint256 indexed tradeId, address indexed trader, uint16 pairIndex, uint256 amount);
+    event OracleFeeChargedLimitCancelled(address indexed trader, uint16 pairIndex, uint256 amount);
+    event OracleFeeRefunded(uint256 indexed tradeId, address indexed trader, uint16 pairIndex, uint256 amount);
 
     error IsDone();
     error WrongTP();
@@ -103,7 +106,6 @@ interface IOstiumTrading {
     error NoLimitFound(address trader, uint16 pairIndex, uint8 index);
     error AlreadyMarketClosed(address trader, uint16 pairIndex, uint8 index);
     error TriggerPending(address sender, uint16 pairIndex, uint8 index);
-    error RemoveAmountTooHigh();
 
     function isDone() external view returns (bool);
     function isPaused() external view returns (bool);

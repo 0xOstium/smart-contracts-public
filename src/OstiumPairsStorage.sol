@@ -4,7 +4,6 @@ import '@openzeppelin/contracts/utils/math/SafeCast.sol';
 
 import './interfaces/IOstiumVault.sol';
 import './interfaces/IOstiumRegistry.sol';
-import './interfaces/IOstiumPairInfos.sol';
 import './interfaces/IOstiumPairsStorage.sol';
 import './interfaces/IOstiumTradingStorage.sol';
 
@@ -15,10 +14,9 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
 
     IOstiumRegistry public registry;
 
-    uint256 constant MAX_TRADE_SIZE_REF = 10000000e6; // 10M
-    uint32 constant MAX_SPREADP = 10000000; // 10%, PRECISION_6
     uint32 constant MAX_LEVERAGE = 100000; // 1000, PRECISION_2
     uint8 constant MIN_LEVERAGE = 100; // PRECISION_2
+    uint32 constant MAX_ORACLE_FEE = 10e6; // PRECISION_6
 
     uint16 public pairsCount;
     uint8 public groupsCount;
@@ -40,6 +38,17 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
             revert WrongParams();
         }
         registry = _registry;
+    }
+
+    function initializeV2(uint16[] calldata indices, uint32[] calldata overnightMaxLeverages)
+        external
+        reinitializer(2)
+    {
+        if (indices.length != overnightMaxLeverages.length) revert WrongParams();
+
+        for (uint16 i; i < indices.length; i++) {
+            _setPairOvernightMaxLeverage(indices[i], overnightMaxLeverages[i]);
+        }
     }
 
     // Modifiers
@@ -81,6 +90,15 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         if (fees[_feeIndex].name == bytes32(0)) revert FeeNotListed(_feeIndex);
     }
 
+    modifier pairListed(uint16 _pairIndex) {
+        _pairListed(_pairIndex);
+        _;
+    }
+
+    function _pairListed(uint16 _pairIndex) internal view {
+        if (!isPairIndexListed[_pairIndex]) revert PairNotListed(_pairIndex);
+    }
+
     modifier pairOk(Pair calldata _pair) {
         _pairOk(_pair);
         _;
@@ -88,11 +106,11 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
 
     function _pairOk(Pair calldata _pair) internal view {
         if (
-            _pair.spreadP > MAX_SPREADP || _pair.maxLeverage > MAX_LEVERAGE
-                || (
-                    _pair.maxLeverage != 0 && _pair.maxLeverage < groups[_pair.groupIndex].minLeverage
-                        || _pair.tradeSizeRef > MAX_TRADE_SIZE_REF
-                )
+            _pair.overnightMaxLeverage
+                > (_pair.maxLeverage != 0 ? _pair.maxLeverage : groups[_pair.groupIndex].maxLeverage)
+                || _pair.overnightMaxLeverage != 0 && _pair.overnightMaxLeverage < groups[_pair.groupIndex].minLeverage
+                || _pair.maxLeverage > MAX_LEVERAGE
+                || (_pair.maxLeverage != 0 && _pair.maxLeverage < groups[_pair.groupIndex].minLeverage)
         ) {
             revert WrongParams();
         }
@@ -116,7 +134,9 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
     }
 
     function _feeOk(Fee calldata _fee) internal pure {
-        if (_fee.minLevPos == 0 || _fee.liqFeeP > 100) revert WrongParams();
+        if (_fee.minLevPos == 0 || _fee.liqFeeP > 100 || _fee.oracleFee == 0 || _fee.oracleFee > MAX_ORACLE_FEE) {
+            revert WrongParams();
+        }
     }
 
     function addPair(Pair calldata _pair)
@@ -150,12 +170,13 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         onlyGov
         feeListed(_pair.feeIndex)
         pairOk(_pair)
+        pairListed(_pairIndex)
     {
         Pair storage p = pairs[_pairIndex];
-        if (!isPairListed[p.from][p.to]) revert PairNotListed(_pairIndex);
+        if (p.from != _pair.from || p.to != _pair.to) revert WrongParams();
 
         p.feed = _pair.feed;
-        p.spreadP = _pair.spreadP;
+        p.overnightMaxLeverage = _pair.overnightMaxLeverage;
         p.feeIndex = _pair.feeIndex;
         p.maxLeverage = _pair.maxLeverage;
         p.oracle = _pair.oracle;
@@ -164,8 +185,7 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         emit PairUpdated(_pairIndex);
     }
 
-    function removePair(uint16 _pairIndex) external onlyGov {
-        if (!isPairIndexListed[_pairIndex]) revert PairNotListed(_pairIndex);
+    function removePair(uint16 _pairIndex) external onlyGov pairListed(_pairIndex) {
         if (IOstiumTradingStorage(registry.getContractAddress('tradingStorage')).pairTradersCount(_pairIndex) > 0) {
             revert PairNotEmpty();
         }
@@ -200,13 +220,14 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         emit FeeUpdated(_id);
     }
 
-    function updateGroupCollateral(uint16 _pairIndex, uint256 _amount, bool _long, bool _increase) external {
+    function updateGroupCollateral(uint16 _pairIndex, uint256 _amount, bool _long, bool _increase)
+        external
+        pairListed(_pairIndex)
+    {
         if (
             msg.sender != registry.getContractAddress('callbacks')
                 && msg.sender != registry.getContractAddress('trading')
         ) revert NotAuthorized(msg.sender);
-
-        if (!isPairIndexListed[_pairIndex]) revert PairNotListed(_pairIndex);
 
         uint256[2] storage collateralOpen = groupsCollaterals[pairs[_pairIndex].groupIndex];
         uint256 index = _long ? 0 : 1;
@@ -222,16 +243,16 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         return pairs[_pairIndex].feed;
     }
 
-    function getFeedInfo(uint16 pairIndex) external view returns (bytes32, uint32, uint64, string memory) {
-        return (pairs[pairIndex].feed, pairs[pairIndex].spreadP, pairs[pairIndex].tradeSizeRef, pairs[pairIndex].oracle);
+    function getFeedInfo(uint16 pairIndex) external view returns (bytes32, uint32) {
+        return (pairs[pairIndex].feed, pairs[pairIndex].overnightMaxLeverage);
     }
 
     function oracle(uint16 pairIndex) external view returns (string memory) {
         return pairs[pairIndex].oracle;
     }
 
-    function pairSpreadP(uint16 _pairIndex) external view returns (uint32) {
-        return pairs[_pairIndex].spreadP;
+    function pairOvernightMaxLeverage(uint16 _pairIndex) external view returns (uint32) {
+        return pairs[_pairIndex].overnightMaxLeverage;
     }
 
     function pairMinLeverage(uint16 _pairIndex) external view returns (uint16) {
@@ -244,10 +265,6 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
             : pairs[_pairIndex].maxLeverage;
     }
 
-    function pairTradeSizeRef(uint16 _pairIndex) external view returns (uint64) {
-        return pairs[_pairIndex].tradeSizeRef;
-    }
-
     function groupMaxCollateral(uint16 _pairIndex) external view returns (uint256) {
         return groups[pairs[_pairIndex].groupIndex].maxCollateralP
             * IOstiumVault(registry.getContractAddress('vault')).currentBalance() / 100_00;
@@ -257,11 +274,15 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         return groupsCollaterals[pairs[_pairIndex].groupIndex][_long ? 0 : 1];
     }
 
-    function setPairMaxLeverage(uint16 pairIndex, uint256 maxLeverage) external onlyManager {
+    function pairOracleFee(uint16 _pairIndex) external view returns (uint64) {
+        return fees[pairs[_pairIndex].feeIndex].oracleFee;
+    }
+
+    function setPairMaxLeverage(uint16 pairIndex, uint32 maxLeverage) external onlyManager {
         _setPairMaxLeverage(pairIndex, maxLeverage);
     }
 
-    function setPairMaxLeverageArray(uint16[] calldata indices, uint256[] calldata values) external onlyManager {
+    function setPairMaxLeverageArray(uint16[] calldata indices, uint32[] calldata values) external onlyManager {
         uint256 len = indices.length;
         if (len != values.length) revert WrongParams();
 
@@ -270,13 +291,52 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         }
     }
 
-    function _setPairMaxLeverage(uint16 pairIndex, uint256 maxLeverage) private {
+    function _setPairMaxLeverage(uint16 pairIndex, uint32 maxLeverage) private pairListed(pairIndex) {
         Pair storage p = pairs[pairIndex];
-        if (maxLeverage > MAX_LEVERAGE || (maxLeverage != 0 && maxLeverage < groups[p.groupIndex].minLeverage)) {
+        if (
+            maxLeverage > MAX_LEVERAGE || (maxLeverage != 0 && maxLeverage < groups[p.groupIndex].minLeverage)
+                || (maxLeverage != 0 && maxLeverage < p.overnightMaxLeverage)
+        ) {
             revert WrongParams();
         }
-        p.maxLeverage = maxLeverage.toUint32();
-        emit PairMaxLeverageUpdated(pairIndex, p.maxLeverage);
+        p.maxLeverage = maxLeverage;
+        emit PairMaxLeverageUpdated(pairIndex, maxLeverage);
+    }
+
+    function setPairOvernightMaxLeverage(uint16 pairIndex, uint32 overnightMaxLeverage) external onlyManager {
+        _setPairOvernightMaxLeverage(pairIndex, overnightMaxLeverage);
+    }
+
+    function setPairOvernightMaxLeverageArray(uint16[] calldata indices, uint32[] calldata values)
+        external
+        onlyManager
+    {
+        uint256 len = indices.length;
+        if (len != values.length) revert WrongParams();
+
+        for (uint256 i; i < len; i++) {
+            _setPairOvernightMaxLeverage(indices[i], values[i]);
+        }
+    }
+
+    function _setPairOvernightMaxLeverage(uint16 pairIndex, uint32 overnightMaxLeverage)
+        private
+        pairListed(pairIndex)
+    {
+        if (
+            overnightMaxLeverage
+                > (
+                    pairs[pairIndex].maxLeverage != 0
+                        ? pairs[pairIndex].maxLeverage
+                        : groups[pairs[pairIndex].groupIndex].maxLeverage
+                ) || (overnightMaxLeverage != 0 && overnightMaxLeverage < groups[pairs[pairIndex].groupIndex].minLeverage)
+        ) {
+            revert WrongParams();
+        }
+
+        pairs[pairIndex].overnightMaxLeverage = overnightMaxLeverage;
+
+        emit PairOvernightMaxLeverageUpdated(pairIndex, overnightMaxLeverage);
     }
 
     function pairLiquidationFeeP(uint16 _pairIndex) external view returns (uint16) {

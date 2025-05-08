@@ -20,3 +20,8 @@ yarn
 ```
  npx hardhat compile
 ```
+
+## Acknowledgements
+
+This repository is adapted from the Gains v5 open-source codebase. We credit the Gains Network contributors for their work, which served as a starting point for this implementation. Significant modifications and new functionality have been introduced to align with Ostium’s protocol architecture and design objectives. This includes integrations and components specific to our system.
+For reference, please consult the original Gains v5 repository for upstream logic and licensing information.

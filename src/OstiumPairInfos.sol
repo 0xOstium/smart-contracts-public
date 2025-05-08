@@ -41,10 +41,9 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
     uint16 constant MAX_HILL_SCALE = 250; // PRECISION_2
 
     uint8 constant PRECISION_2 = 1e2; // 2 decimals
-    uint8 constant MIN_LIQ_THRESHOLD_P = 90;
-    uint8 constant MAX_LIQ_THRESHOLD_P = 100;
+    uint8 constant MAX_LIQ_MARGIN_THRESHOLD_P = 50;
 
-    uint8 public liqThresholdP;
+    uint8 public liqMarginThresholdP; // e.g., set to 25 (25%)
     uint8 public maxNegativePnlOnOpenP; // (%)
 
     mapping(uint16 pairIndex => PairOpeningFees) public pairOpeningFees;
@@ -60,7 +59,7 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
     function initialize(
         IOstiumRegistry _registry,
         address _manager,
-        uint256 _liqThresholdP,
+        uint256 _liqMarginThresholdP,
         uint256 _maxNegativePnlOnOpenP
     ) external initializer {
         if (address(_registry) == address(0) || _manager == address(0)) {
@@ -69,7 +68,7 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
 
         registry = _registry;
         _setManager(_manager);
-        _setLiqThresholdP(_liqThresholdP);
+        _setLiqMarginThresholdP(_liqMarginThresholdP);
         _setMaxNegativePnlOnOpenP(_maxNegativePnlOnOpenP);
     }
 
@@ -96,6 +95,11 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
 
             storeAccFundingFees(i);
         }
+    }
+
+    function initializeV3(uint256 _liqMarginThresholdP, uint256 _maxNegativePnlOnOpenP) external reinitializer(3) {
+        _setLiqMarginThresholdP(_liqMarginThresholdP);
+        _setMaxNegativePnlOnOpenP(_maxNegativePnlOnOpenP);
     }
 
     // Modifiers
@@ -139,17 +143,16 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
         emit ManagerUpdated(_manager);
     }
 
-    function setLiqThresholdP(uint256 value) external onlyGov {
-        _setLiqThresholdP(value);
+    function setLiqMarginThresholdP(uint256 value) external onlyGov {
+        _setLiqMarginThresholdP(value);
     }
 
-    function _setLiqThresholdP(uint256 value) private {
-        if (value < MIN_LIQ_THRESHOLD_P || value > MAX_LIQ_THRESHOLD_P || value < maxNegativePnlOnOpenP) {
+    function _setLiqMarginThresholdP(uint256 value) private {
+        if (value > MAX_LIQ_MARGIN_THRESHOLD_P || maxNegativePnlOnOpenP > 100 - value) {
             revert WrongParams();
         }
-        liqThresholdP = value.toUint8();
-
-        emit LiqThresholdPUpdated(value);
+        liqMarginThresholdP = value.toUint8();
+        emit LiqMarginThresholdPUpdated(value);
     }
 
     function setMaxNegativePnlOnOpenP(uint256 value) external onlyGov {
@@ -157,7 +160,7 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
     }
 
     function _setMaxNegativePnlOnOpenP(uint256 value) private {
-        if (value == 0 || value >= liqThresholdP) revert WrongParams();
+        if (value == 0 || value > 100 - liqMarginThresholdP) revert WrongParams();
         maxNegativePnlOnOpenP = value.toUint8();
 
         emit MaxNegativePnlOnOpenPUpdated(value);
@@ -664,7 +667,8 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
         uint256 openPrice,
         bool long,
         uint256 collateral,
-        uint32 leverage
+        uint32 leverage,
+        uint32 maxLeverage
     ) external view returns (uint256) {
         int256 fundingFee;
         {
@@ -676,13 +680,15 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
                 leverage
             );
         }
+
         return getTradeLiquidationPricePure(
             openPrice,
             long,
             collateral,
             leverage,
             getTradeRolloverFee(trader, pairIndex, index, collateral, leverage),
-            fundingFee
+            fundingFee,
+            maxLeverage
         );
     }
 
@@ -692,56 +698,74 @@ contract OstiumPairInfos is IOstiumPairInfos, Initializable {
         uint256 collateral,
         uint32 leverage,
         uint256 rolloverFee,
-        int256 fundingFee
+        int256 fundingFee,
+        uint32 maxLeverage
     ) public view returns (uint256) {
-        int256 liqPriceDistance = (
-            openPrice.toInt256()
-                * (((collateral * liqThresholdP) / 100).toInt256() - rolloverFee.toInt256() - fundingFee)
-        ) / collateral.toInt256() * int8(PRECISION_2) / int32(leverage);
+        int256 signedCollateral = collateral.toInt256();
+        int256 liqMarginValue = getTradeLiquidationMargin(collateral, leverage, maxLeverage).toInt256();
+        int256 targetCollateralAfterFees = signedCollateral - liqMarginValue - int256(rolloverFee) - fundingFee;
+
+        int256 liqPriceDistance =
+            (openPrice.toInt256() * targetCollateralAfterFees) / signedCollateral * int8(PRECISION_2) / int32(leverage);
+
         int256 liqPrice = long ? openPrice.toInt256() - liqPriceDistance : openPrice.toInt256() + liqPriceDistance;
 
         return liqPrice > 0 ? uint256(liqPrice) : 0;
     }
 
     function getTradeValue(
-        uint256 orderId,
-        uint256 tradeId,
         address trader,
         uint16 pairIndex,
         uint8 index,
         bool long,
         uint256 collateral,
         uint32 leverage,
-        int256 percentProfit
-    ) external onlyCallbacks returns (uint256 amount) {
+        int256 percentProfit,
+        uint32 maxLeverage
+    ) external onlyCallbacks returns (uint256 tradeValue, uint256 liqMarginValue, uint256 r, int256 f) {
         storeAccFundingFees(pairIndex);
 
-        uint256 r = getTradeRolloverFee(trader, pairIndex, index, collateral, leverage);
-        int256 f = getTradeFundingFeePure(
+        r = getTradeRolloverFee(trader, pairIndex, index, collateral, leverage);
+        f = getTradeFundingFeePure(
             tradeInitialAccFees[trader][pairIndex][index].funding,
             long ? pairFundingFees[pairIndex].accPerOiLong : pairFundingFees[pairIndex].accPerOiShort,
             collateral,
             leverage
         );
-        amount = getTradeValuePure(collateral, percentProfit, r, f);
 
-        emit FeesCharged(orderId, tradeId, trader, r, f);
+        liqMarginValue = getTradeLiquidationMargin(collateral, leverage, maxLeverage);
+        tradeValue = getTradeValuePure(collateral, percentProfit, r, f, liqMarginValue);
+
+        if (tradeValue <= liqMarginValue) {
+            tradeValue = 0;
+        }
     }
 
-    function getTradeValuePure(uint256 collateral, int256 percentProfit, uint256 rolloverFee, int256 fundingFee)
-        public
-        view
-        returns (uint256)
-    {
+    function getTradeValuePure(
+        uint256 collateral,
+        int256 percentProfit,
+        uint256 rolloverFee,
+        int256 fundingFee,
+        uint256 liqMarginValue
+    ) public pure returns (uint256) {
         int256 signedCollateral = collateral.toInt256();
         int256 value = signedCollateral + (signedCollateral * percentProfit) / int32(PRECISION_6) / 100
             - int256(rolloverFee) - fundingFee;
 
-        if (value <= (signedCollateral * int8(100 - liqThresholdP)) / 100) {
-            return 0;
+        if (value <= liqMarginValue.toInt256()) {
+            value = 0;
         }
 
-        return value > 0 ? value.toUint256() : 0;
+        return value.toUint256();
+    }
+
+    function getTradeLiquidationMargin(uint256 collateral, uint32 leverage, uint32 maxLeverage)
+        public
+        view
+        returns (uint256)
+    {
+        uint256 rawAdjustedThreshold = uint256(liqMarginThresholdP) * leverage * PRECISION_6 / maxLeverage;
+        return collateral * rawAdjustedThreshold / (100 * PRECISION_6);
     }
 
     function getRolloverFeePerBlock(uint16 pairIndex) external view returns (uint256) {

@@ -22,7 +22,9 @@ interface IOstiumTradingCallbacks {
         NO_TRADE,
         UNDER_LIQUIDATION,
         NOT_HIT,
-        GAIN_LOSS
+        GAIN_LOSS,
+        DAY_TRADE_NOT_ALLOWED,
+        CLOSE_DAY_TRADE_NOT_ALLOWED
     }
 
     event MarketOpenExecuted(
@@ -108,6 +110,13 @@ interface IOstiumTradingCallbacks {
         uint32 leverage,
         uint192 tp,
         uint192 sl
+    );
+    event FeesCharged(
+        uint256 indexed orderId,
+        uint256 indexed tradeId,
+        address indexed trader,
+        uint256 rolloverFees,
+        int256 fundingFees
     );
 
     error IsDone();

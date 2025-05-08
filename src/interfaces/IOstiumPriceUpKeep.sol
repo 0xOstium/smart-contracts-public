@@ -7,10 +7,9 @@ interface IOstiumPriceUpKeep {
     struct PriceUpKeepAnswer {
         uint256 orderId;
         int192 price;
-        uint64 spreadP;
         int192 bid;
         int192 ask;
-        uint64 tradeSizeRef;
+        bool isDayTradingClosed;
     }
 
     enum OrderType {

@@ -101,8 +101,8 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
 
         bytes32 feedId;
         a.orderId = orderId;
-        (feedId, a.spreadP, a.tradeSizeRef,) =
-            IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).getFeedInfo(order.pairIndex);
+        a.isDayTradingClosed = false;
+        feedId = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(order.pairIndex);
 
         (reportFeedId, validFromTimestamp, observationsTimestamp, nativeFee,,, a.price, a.bid, a.ask) =
             abi.decode(verifierResponse, (bytes32, uint32, uint32, uint192, uint192, uint32, int192, int192, int192));

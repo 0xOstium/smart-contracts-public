@@ -85,12 +85,10 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
 
         a.orderId = orderId;
 
-        bytes32 feedId;
-        (feedId, a.spreadP, a.tradeSizeRef,) =
-            IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).getFeedInfo(order.pairIndex);
+        bytes32 feedId = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(order.pairIndex);
 
-        (reportFeedId, timestamp, a.price, a.bid, a.ask, isMarketOpen) =
-            abi.decode(verifierResponse, (bytes32, uint32, int192, int192, int192, bool));
+        (reportFeedId, timestamp, a.price, a.bid, a.ask, isMarketOpen, a.isDayTradingClosed) =
+            abi.decode(verifierResponse, (bytes32, uint32, int192, int192, int192, bool, bool));
 
         if (!isMarketOpen) {
             delete a.price;

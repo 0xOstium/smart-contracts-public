@@ -222,70 +222,45 @@ library TradingCallbacksLib {
         IOstiumTradingStorage.LimitOrder orderType,
         IOstiumTradingStorage.Trade memory t,
         uint256 priceAfterImpact,
-        uint256 aPrice,
-        uint256 liqPrice
-    ) internal pure returns (IOstiumTradingCallbacks.CancelReason) {
-        if (orderType == IOstiumTradingStorage.LimitOrder.LIQ) {
-            // LIQ order at given price - MARKET classification - execute at Median Price condition
-            return (t.buy ? uint192(aPrice) <= liqPrice : uint192(aPrice) >= liqPrice)
+        uint256 usdcSentToTrader,
+        bool isDayTradeClosed
+    ) external pure returns (IOstiumTradingCallbacks.CancelReason) {
+        if (orderType == IOstiumTradingStorage.LimitOrder.CLOSE_DAY_TRADE) {
+            return isDayTradeClosed
+                ? IOstiumTradingCallbacks.CancelReason.NONE
+                : IOstiumTradingCallbacks.CancelReason.CLOSE_DAY_TRADE_NOT_ALLOWED;
+        } else if (orderType == IOstiumTradingStorage.LimitOrder.LIQ) {
+            return usdcSentToTrader == 0
                 ? IOstiumTradingCallbacks.CancelReason.NONE
                 : IOstiumTradingCallbacks.CancelReason.NOT_HIT;
-        } else {
-            // TP order at given price - LIMIT classification - execute at priceAfterImpact condition
-            if (
-                // SL order at given price - MARKET classification - execute at Median Price condition
-                (
-                    orderType == IOstiumTradingStorage.LimitOrder.TP && t.tp > 0
-                        && (t.buy ? priceAfterImpact >= t.tp : priceAfterImpact <= t.tp)
-                )
-                    || (
-                        orderType == IOstiumTradingStorage.LimitOrder.SL && t.sl > 0
-                            && (t.buy ? uint192(aPrice) <= t.sl : uint192(aPrice) >= t.sl)
-                    )
-            ) {
-                return IOstiumTradingCallbacks.CancelReason.NONE;
-            }
-            return IOstiumTradingCallbacks.CancelReason.NOT_HIT;
+        } else if (orderType == IOstiumTradingStorage.LimitOrder.TP) {
+            return t.tp > 0 && (t.buy ? priceAfterImpact >= t.tp : priceAfterImpact <= t.tp)
+                ? IOstiumTradingCallbacks.CancelReason.NONE
+                : IOstiumTradingCallbacks.CancelReason.NOT_HIT;
+        } else if (orderType == IOstiumTradingStorage.LimitOrder.SL) {
+            return t.sl > 0 && (t.buy ? priceAfterImpact <= t.sl : priceAfterImpact >= t.sl)
+                ? IOstiumTradingCallbacks.CancelReason.NONE
+                : IOstiumTradingCallbacks.CancelReason.NOT_HIT;
         }
+        return IOstiumTradingCallbacks.CancelReason.NOT_HIT;
     }
 
     function getHandleRemoveCollateralCancelReason(
         IOstiumTradingStorage.Trade memory trade,
-        IOstiumPriceUpKeep.PriceUpKeepAnswer calldata a,
-        uint32 initialLeverage,
-        IOstiumPairInfos pairInfos,
-        IOstiumPairsStorage pairsStorage
-    ) external view returns (IOstiumTradingCallbacks.CancelReason) {
-        // Check if new leverage is above pair max leverage
-        if (trade.leverage > pairsStorage.pairMaxLeverage(trade.pairIndex)) {
+        uint32 maxLeverage,
+        uint256 usdcSentToTrader,
+        bool isMaxPnlP
+    ) external pure returns (IOstiumTradingCallbacks.CancelReason) {
+        if (usdcSentToTrader == 0) {
+            return IOstiumTradingCallbacks.CancelReason.UNDER_LIQUIDATION;
+        }
+
+        if (trade.leverage > maxLeverage) {
             return IOstiumTradingCallbacks.CancelReason.MAX_LEVERAGE;
         }
 
-        (, uint256 priceAfterImpact) = getTradePriceImpact(a.price, a.ask, a.bid, false, trade.buy);
-
-        (int256 p, int256 maxPnlP) = _currentPercentProfit(
-            trade.openPrice.toInt256(),
-            priceAfterImpact.toInt256(),
-            trade.buy,
-            int32(trade.leverage),
-            int32(initialLeverage)
-        );
-
-        // Check if gain loss applies
-        if (p == maxPnlP) {
+        if (isMaxPnlP) {
             return IOstiumTradingCallbacks.CancelReason.GAIN_LOSS;
-        }
-
-        // Calculate new liquidation price
-        uint256 newLiqPrice = pairInfos.getTradeLiquidationPrice(
-            trade.trader, trade.pairIndex, trade.index, trade.openPrice, trade.buy, trade.collateral, trade.leverage
-        );
-
-        // Check if new liquidation price is safe
-        bool isUnderLiquidation = trade.buy ? uint192(a.price) < newLiqPrice : uint192(a.price) > newLiqPrice;
-
-        if (isUnderLiquidation) {
-            return IOstiumTradingCallbacks.CancelReason.UNDER_LIQUIDATION;
         }
 
         return IOstiumTradingCallbacks.CancelReason.NONE;

@@ -1,6 +1,6 @@
 {
   "name": "smart-contracts-public",
-  "version": "1.0.0",
+  "version": "1.2.3",
   "description": "This repository contains the official Ostium contracts deployed on Arbitrum One",
   "main": "index.js",
   "scripts": {

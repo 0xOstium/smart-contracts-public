@@ -7,7 +7,7 @@ interface IOstiumPairsStorage {
         bytes32 to;
         bytes32 feed;
         uint64 tradeSizeRef;
-        uint32 spreadP; // PRECISION_6 (%)
+        uint32 overnightMaxLeverage;
         uint32 maxLeverage;
         uint8 groupIndex;
         uint8 feeIndex;
@@ -35,7 +35,9 @@ interface IOstiumPairsStorage {
     event GroupUpdated(uint8 indexed index);
     event FeeAdded(uint8 index, bytes32 name);
     event FeeUpdated(uint8 indexed index);
+    event PairFeedUpdated(uint16 indexed pairIndex, bytes32 feed);
     event PairMaxLeverageUpdated(uint16 indexed pairIndex, uint32 maxLeverage);
+    event PairOvernightMaxLeverageUpdated(uint16 indexed pairIndex, uint32 overnightMaxLeverage);
 
     error MaxReached();
     error WrongParams();
@@ -50,12 +52,11 @@ interface IOstiumPairsStorage {
 
     function isPairIndexListed(uint16 _pairIndex) external view returns (bool);
     function pairFeed(uint16) external view returns (bytes32);
-    function getFeedInfo(uint16 pairIndex) external view returns (bytes32, uint32, uint64, string memory);
+    function getFeedInfo(uint16 pairIndex) external view returns (bytes32, uint32);
     function oracle(uint16 pairIndex) external view returns (string memory);
-    function pairSpreadP(uint16) external view returns (uint32);
+    function pairOvernightMaxLeverage(uint16) external view returns (uint32);
     function pairMinLeverage(uint16) external view returns (uint16);
     function pairMaxLeverage(uint16) external view returns (uint32);
-    function pairTradeSizeRef(uint16 _pairIndex) external view returns (uint64);
     function groupMaxCollateral(uint16) external view returns (uint256);
     function groupCollateral(uint16, bool) external view returns (uint256);
     function pairLiquidationFeeP(uint16 _pairIndex) external view returns (uint16);
@@ -74,6 +75,7 @@ interface IOstiumPairsStorage {
     function fees(uint8 feeIndex) external view returns (bytes32, uint64, uint64, uint16);
     // function groupsCollaterals(uint8 groupIndex) external view returns (uint256[2] memory);
     function isPairListed(bytes32 fromPair, bytes32 toPair) external view returns (bool);
+    function pairOracleFee(uint16 pairIndex) external view returns (uint64);
 
     // onlyGov
     function addPair(Pair calldata _pair) external;
@@ -86,8 +88,8 @@ interface IOstiumPairsStorage {
     function updateFee(uint8 _id, Fee calldata _fee) external;
 
     // onlyManager
-    function setPairMaxLeverage(uint16 pairIndex, uint256 maxLeverage) external;
-    function setPairMaxLeverageArray(uint16[] calldata indices, uint256[] calldata values) external;
+    function setPairMaxLeverage(uint16 pairIndex, uint32 maxLeverage) external;
+    function setPairMaxLeverageArray(uint16[] calldata indices, uint32[] calldata values) external;
 
     // onlyCallbacks
     function updateGroupCollateral(uint16 _pairIndex, uint256 _amount, bool _long, bool _increase) external;

@@ -11,7 +11,9 @@ interface IOstiumTradingStorage {
         TP,
         SL,
         LIQ,
-        OPEN
+        OPEN,
+        CLOSE_DAY_TRADE,
+        REMOVE_COLLATERAL
     }
     enum OpenOrderType {
         MARKET,
@@ -96,6 +98,7 @@ interface IOstiumTradingStorage {
     error NotTrading(address a);
     error NotManager(address a);
     error NotCallbacks(address a);
+    error RefundOracleFeeFailed();
     error NotTradingOrCallbacks(address a);
     error NoOpenLimitOrder(address _trader, uint16 _pairIndex, uint8 _index);
 
@@ -173,7 +176,7 @@ interface IOstiumTradingStorage {
     function getPairOpeningInterestInfo(uint16 _pairIndex) external view returns (uint256, uint256, uint256);
 
     // onlyGov
-    function claimFees() external;
+    function claimFees(uint256 _amount) external;
     function setMaxTradesPerPair(uint256 _maxTradesPerPair) external;
     function setMaxPendingMarketOrders(uint256 _maxPendingMarketOrders) external;
     function setMaxOpenInterest(uint16 _pairIndex, uint256 _newMaxOpenInterest) external;
@@ -212,7 +215,8 @@ interface IOstiumTradingStorage {
         uint32 leverage,
         bool isBuy
     ) external returns (uint256, uint256);
-
+    function handleOracleFee(uint256 _amount) external;
+    function refundOracleFee(uint256 _amount) external;
     function storePendingRemoveCollateral(PendingRemoveCollateral calldata request, uint256 orderId) external;
     function getPendingRemoveCollateral(uint256 orderId) external view returns (PendingRemoveCollateral memory);
     function unregisterPendingRemoveCollateral(uint256 orderId) external;

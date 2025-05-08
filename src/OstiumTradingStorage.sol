@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT
 import '@openzeppelin/contracts/utils/math/SafeCast.sol';
 import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
-import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
 
 import './lib/ChainUtils.sol';
-import './interfaces/IOstiumPairsStorage.sol';
 import './interfaces/IOstiumTradingStorage.sol';
 import './interfaces/IOstiumRegistry.sol';
 import './interfaces/IOstiumPairInfos.sol';
@@ -400,11 +398,25 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         devFees += devFee;
     }
 
-    function claimFees() external onlyGov {
-        uint256 _devFees = devFees;
-        devFees = 0;
+    function handleOracleFee(uint256 _amount) external onlyTradingOrCallbacks {
+        devFees += _amount;
+    }
 
-        SafeERC20.safeTransfer(IERC20(usdc), registry.dev(), _devFees);
+    function refundOracleFee(uint256 _amount) external onlyTrading {
+        if (_amount > devFees) {
+            revert RefundOracleFeeFailed();
+        }
+        devFees -= _amount;
+    }
+
+    function claimFees(uint256 _amount) external onlyGov {
+        uint256 _devFees = devFees;
+        if (_amount > _devFees || _amount == 0) {
+            revert WrongParams();
+        }
+        devFees -= _amount;
+
+        SafeERC20.safeTransfer(IERC20(usdc), registry.dev(), _amount);
     }
 
     function transferUsdc(address _from, address _to, uint256 _amount) external onlyTradingOrCallbacks {
