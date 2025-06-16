@@ -399,7 +399,7 @@ contract OstiumVault is IOstiumVault, ERC4626Upgradeable {
         address sender = _msgSender();
         uint256 allowance = allowance(owner, sender);
 
-        if (sender != owner && allowance != type(uint256).max) {
+        if (sender != owner && (allowance == 0 || allowance < shares)) {
             revert NotAllowed(sender);
         }
         if (totalSharesBeingWithdrawn(owner) + shares > balanceOf(owner)) {
@@ -420,7 +420,7 @@ contract OstiumVault is IOstiumVault, ERC4626Upgradeable {
         address sender = _msgSender();
         uint256 allowance = allowance(owner, sender);
 
-        if (sender != owner && allowance != type(uint256).max) {
+        if (sender != owner && (allowance == 0 || allowance < shares)) {
             revert NotAllowed(sender);
         }
 
