@@ -7,6 +7,7 @@ import './interfaces/IOstiumPriceUpKeep.sol';
 
 import '@openzeppelin/contracts/utils/math/SafeCast.sol';
 import '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
+import './interfaces/IOwnable.sol';
 
 pragma solidity ^0.8.24;
 
@@ -41,6 +42,17 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
         }
     }
 
+    modifier onlyTimelock() {
+        _onlyTimelock();
+        _;
+    }
+
+    function _onlyTimelock() private view {
+        if (msg.sender != IOwnable(address(registry)).owner()) {
+            revert NotTimelock(msg.sender);
+        }
+    }
+
     modifier onlyRouter() {
         _onlyRouter();
         _;
@@ -57,9 +69,9 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
             revert AlreadyInitiated(orderId);
         }
         bytes32 feed = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(pairIndex);
-        orders[orderId] = Order(timestamp.toUint32(), pairIndex, orderType, true);
+        orders[orderId] = Order(timestamp.toUint32(), pairIndex, orderType, true, feed);
 
-        emit PriceRequested(orderId, feed, timestamp);
+        emit PriceRequestedV2(orderId, orderType, feed, timestamp);
     }
 
     function performUpkeep(bytes calldata performData) external {
@@ -85,8 +97,6 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
 
         a.orderId = orderId;
 
-        bytes32 feedId = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(order.pairIndex);
-
         (reportFeedId, timestamp, a.price, a.bid, a.ask, isMarketOpen, a.isDayTradingClosed) =
             abi.decode(verifierResponse, (bytes32, uint32, int192, int192, int192, bool, bool));
 
@@ -96,7 +106,13 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
             delete a.ask;
         }
 
-        if (order.timestamp != timestamp || feedId != reportFeedId) {
+        // Backward compatibility: if feedId is not set (old orders before upgrade), fetch from storage
+        bytes32 expectedFeedId = order.feedId;
+        if (expectedFeedId == bytes32(0)) {
+            expectedFeedId = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(order.pairIndex);
+        }
+
+        if (order.timestamp != timestamp || expectedFeedId != reportFeedId) {
             revert InvalidPrice(orderId);
         }
 
@@ -124,7 +140,7 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
         delete orders[a.orderId];
     }
 
-    function registerForwarder(address forwarderAddress) public onlyGov {
+    function registerForwarder(address forwarderAddress) public onlyTimelock {
         if (isForwarder[forwarderAddress]) {
             revert AlreadyForwarder(forwarderAddress);
         }
@@ -132,7 +148,7 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
         emit ForwarderAdded(forwarderAddress);
     }
 
-    function registerForwarders(address[] calldata forwarderAddresses) external onlyGov {
+    function registerForwarders(address[] calldata forwarderAddresses) external onlyTimelock {
         for (uint256 i = 0; i < forwarderAddresses.length; i++) {
             registerForwarder(forwarderAddresses[i]);
         }
@@ -152,3 +168,4 @@ contract OstiumPrivatePriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, Initi
         }
     }
 }
+

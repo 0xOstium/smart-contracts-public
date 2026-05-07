@@ -29,9 +29,11 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
     uint8 public maxPendingMarketOrders;
 
     // Trades mappings
-    mapping(address trader => mapping(uint16 pairIndex => mapping(uint8 tradeIndex => IOstiumTradingStorage.Trade)))
-        public openTrades;
-    mapping(address trader => mapping(uint16 pairIndex => mapping(uint8 tradeIndex => TradeInfo))) public openTradesInfo;
+    mapping(
+        address trader => mapping(uint16 pairIndex => mapping(uint8 tradeIndex => IOstiumTradingStorage.Trade))
+    ) public openTrades;
+    mapping(address trader => mapping(uint16 pairIndex => mapping(uint8 tradeIndex => TradeInfo))) public
+        openTradesInfo;
     mapping(address trader => mapping(uint16 pairIndex => uint32)) public openTradesCount;
 
     // Limit orders mappings
@@ -41,9 +43,8 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
     mapping(
         address trader
             => mapping(
-                uint16 pairIndex
-                    => mapping(uint8 index => mapping(IOstiumTradingStorage.LimitOrder orderType => uint256))
-            )
+            uint16 pairIndex => mapping(uint8 index => mapping(IOstiumTradingStorage.LimitOrder orderType => uint256))
+        )
     ) public orderTriggerBlock;
     mapping(uint16 pairIndex => OpenLimitOrder[]) public pairLimitOrders;
 
@@ -67,6 +68,14 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
     mapping(
         address trader => mapping(uint16 pairIndex => mapping(uint256 tradeIndex => IOstiumTradingStorage.BuilderFee))
     ) public builderData;
+
+    uint256 public limitOrderIdCounter; // Counter for unique limit order IDs
+
+    mapping(address trader => mapping(uint16 pairIndex => mapping(uint8 index => uint256))) public limitOrderIds;
+
+    mapping(uint256 orderId => uint256 tradeId) public pendingMarketCloseTradeIds;
+
+    address public maxOIKeeper;
 
     constructor() {
         _disableInitializers();
@@ -122,6 +131,14 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         if (msg.sender != registry.manager()) revert NotManager(msg.sender);
     }
 
+    modifier onlyManagerOrMaxOIKeeper() {
+        // checking for the keeper first short circuits the external call most of the times
+        if (msg.sender != maxOIKeeper && msg.sender != registry.manager()) {
+            revert NotManagerOrMaxOIKeeper(msg.sender);
+        }
+        _;
+    }
+
     function _onlyTradingOrCallbacks() internal view {
         if (
             msg.sender != registry.getContractAddress('trading')
@@ -149,21 +166,30 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         emit MaxPendingMarketOrdersUpdated(_maxPendingMarketOrders);
     }
 
-    function setMaxOpenInterest(uint16 _pairIndex, uint256 _newMaxOpenInterest) public onlyManager {
-        openInterest[_pairIndex][2] = _newMaxOpenInterest;
-        emit MaxOpenInterestUpdated(_pairIndex, _newMaxOpenInterest);
+    function setMaxOIKeeper(address _keeper) external onlyManager {
+        maxOIKeeper = _keeper;
+        emit MaxOIKeeperUpdated(_keeper);
+    }
+
+    function setMaxOpenInterest(uint16 _pairIndex, uint256 _newMaxOpenInterest) external onlyManagerOrMaxOIKeeper {
+        _setMaxOpenInterest(_pairIndex, _newMaxOpenInterest);
     }
 
     function setMaxOpenInterestArray(uint16[] calldata _indices, uint256[] calldata _newMaxOpenInterests)
         external
-        onlyManager
+        onlyManagerOrMaxOIKeeper
     {
         if (_indices.length != _newMaxOpenInterests.length) {
             revert WrongParams();
         }
         for (uint256 i = 0; i < _indices.length; i++) {
-            setMaxOpenInterest(_indices[i], _newMaxOpenInterests[i]);
+            _setMaxOpenInterest(_indices[i], _newMaxOpenInterests[i]);
         }
+    }
+
+    function _setMaxOpenInterest(uint16 _pairIndex, uint256 _newMaxOpenInterest) private {
+        openInterest[_pairIndex][2] = _newMaxOpenInterest;
+        emit MaxOpenInterestUpdated(_pairIndex, _newMaxOpenInterest);
     }
 
     function storeTrade(Trade memory _trade, TradeInfo memory _tradeInfo) external onlyCallbacks {
@@ -178,7 +204,6 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
             pairTraders[_trade.pairIndex].push(_trade.trader);
         }
 
-        _tradeInfo.beingMarketClosed = false;
         openTradesInfo[_trade.trader][_trade.pairIndex][_trade.index] = _tradeInfo;
 
         updateOpenInterest(_trade.pairIndex, _tradeInfo.oiNotional, true, _trade.buy);
@@ -198,7 +223,6 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         if (_collateralToClose != t.collateral) {
             t.collateral = t.collateral - _collateralToClose;
             i.oiNotional = i.oiNotional - oiNotionalToClose;
-            i.beingMarketClosed = false;
             return;
         }
 
@@ -215,6 +239,7 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
 
         delete openTrades[_trader][_pairIndex][_index];
         delete openTradesInfo[_trader][_pairIndex][_index];
+        _removeAllTriggers(_trader, _pairIndex, _index);
 
         --openTradesCount[_trader][_pairIndex];
         --totalOpenTradesCount;
@@ -236,8 +261,11 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
             builderData[_order.trade.trader][_order.trade.pairIndex][_id] = bf;
         } else {
             pendingMarketCloseCount[_order.trade.trader][_order.trade.pairIndex]++;
-            openTradesInfo[_order.trade.trader][_order.trade.pairIndex][_order.trade.index].beingMarketClosed = true;
         }
+    }
+
+    function storePendingMarketCloseTradeId(uint256 orderId, uint256 tradeId) external onlyTrading {
+        pendingMarketCloseTradeIds[orderId] = tradeId;
     }
 
     function unregisterPendingMarketOrder(uint256 _id, bool _open) external onlyTradingOrCallbacks {
@@ -251,8 +279,7 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
                     delete builderData[_order.trade.trader][_order.trade.pairIndex][_id];
                 } else {
                     pendingMarketCloseCount[_order.trade.trader][_order.trade.pairIndex]--;
-                    openTradesInfo[_order.trade.trader][_order.trade.pairIndex][_order.trade.index].beingMarketClosed =
-                        false;
+                    delete pendingMarketCloseTradeIds[_id];
                 }
 
                 orderIds[i] = orderIds[orderIds.length - 1];
@@ -275,6 +302,7 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         openLimitOrderIds[o.trader][o.pairIndex][o.index] = pairLimitOrders[o.pairIndex].length - 1;
         openLimitOrdersCount[o.trader][o.pairIndex]++;
         builderData[o.trader][o.pairIndex][o.index] = bf;
+        limitOrderIds[o.trader][o.pairIndex][o.index] = ++limitOrderIdCounter;
     }
 
     function updateOpenLimitOrder(OpenLimitOrder calldata _o) external onlyTrading {
@@ -298,11 +326,13 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
 
         uint256 id = openLimitOrderIds[_trader][_pairIndex][_index];
         pairLimitOrders[_pairIndex][id] = pairLimitOrders[_pairIndex][pairLimitOrders[_pairIndex].length - 1];
-        openLimitOrderIds[pairLimitOrders[_pairIndex][id].trader][pairLimitOrders[_pairIndex][id].pairIndex][pairLimitOrders[_pairIndex][id]
-            .index] = id;
+        openLimitOrderIds[
+            pairLimitOrders[_pairIndex][id].trader
+        ][pairLimitOrders[_pairIndex][id].pairIndex][pairLimitOrders[_pairIndex][id].index] = id;
 
         delete openLimitOrderIds[_trader][_pairIndex][_index];
         delete builderData[_trader][_pairIndex][_index];
+        delete limitOrderIds[_trader][_pairIndex][_index];
         pairLimitOrders[_pairIndex].pop();
 
         openLimitOrdersCount[_trader][_pairIndex]--;
@@ -320,8 +350,27 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         uint16 _pairIndex,
         uint8 _index,
         IOstiumTradingStorage.LimitOrder _orderType
-    ) external onlyCallbacks {
+    ) external onlyTradingOrCallbacks {
         delete orderTriggerBlock[_trader][_pairIndex][_index][_orderType];
+    }
+
+    function clearDeprecatedBeingMarketClosed(address _trader, uint16 _pairIndex, uint8 _index)
+        external
+        onlyTradingOrCallbacks
+    {
+        if (openTradesInfo[_trader][_pairIndex][_index].deprecatedBeingMarketClosed) {
+            openTradesInfo[_trader][_pairIndex][_index].deprecatedBeingMarketClosed = false;
+        }
+    }
+
+    /// @dev Clears all trigger types for a trade index
+    function _removeAllTriggers(address _trader, uint16 _pairIndex, uint8 _index) private {
+        for (uint8 i = 0; i <= uint8(type(IOstiumTradingStorage.LimitOrder).max); i++) {
+            IOstiumTradingStorage.LimitOrder triggerType = IOstiumTradingStorage.LimitOrder(i);
+            // Skip OPEN Limit Order triggers
+            if (triggerType == IOstiumTradingStorage.LimitOrder.OPEN) continue;
+            delete orderTriggerBlock[_trader][_pairIndex][_index][triggerType];
+        }
     }
 
     function storePendingAutomationOrder(PendingAutomationOrder calldata _automationOrder, uint256 _orderId)
@@ -398,12 +447,13 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
 
         int256 oiDelta = oiLong.toInt256() - oiShort.toInt256();
 
-        (devFee, vaultFee) = IOstiumPairInfos(registry.getContractAddress('pairInfos')).getOpeningFee(
-            _pairIndex,
-            isBuy ? _leveragedPositionSize.toInt256() : -_leveragedPositionSize.toInt256(),
-            leverage,
-            oiDelta
-        );
+        (devFee, vaultFee) = IOstiumPairInfos(registry.getContractAddress('pairInfos'))
+            .getOpeningFee(
+                _pairIndex,
+                isBuy ? _leveragedPositionSize.toInt256() : -_leveragedPositionSize.toInt256(),
+                leverage,
+                oiDelta
+            );
 
         devFees += devFee;
     }
@@ -488,11 +538,7 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         return pairLimitOrders[_pairIndex][openLimitOrderIds[_trader][_pairIndex][_index]];
     }
 
-    function getOpenLimitOrderByIndex(uint16 _pairIndex, uint256 _index)
-        external
-        view
-        returns (OpenLimitOrder memory)
-    {
+    function getOpenLimitOrderByIndex(uint16 _pairIndex, uint256 _index) external view returns (OpenLimitOrder memory) {
         if (_index >= pairLimitOrders[_pairIndex].length) {
             revert WrongParams();
         }
@@ -546,3 +592,4 @@ contract OstiumTradingStorage is IOstiumTradingStorage, Initializable {
         return builderData[_trader][_pairIndex][_index];
     }
 }
+

@@ -33,6 +33,14 @@ interface IOstiumTrading {
         uint16 closePercentage
     );
     event OpenLimitPlaced(address indexed trader, uint16 indexed pairIndex, uint8 index);
+    event OpenLimitPlacedV2(
+        address indexed trader,
+        uint16 indexed pairIndex,
+        uint8 index,
+        IOstiumTradingStorage.Trade trade,
+        IOstiumTradingStorage.OpenOrderType orderType,
+        IOstiumTradingStorage.BuilderFee builderFee
+    );
     event OpenLimitUpdated(
         address indexed trader, uint16 indexed pairIndex, uint8 index, uint192 newPrice, uint192 newTp, uint192 newSl
     );

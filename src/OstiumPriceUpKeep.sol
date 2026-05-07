@@ -11,6 +11,7 @@ import 'src/interfaces/external/IChainlinkVerifierProxy.sol';
 import '@openzeppelin/contracts/utils/Address.sol';
 import '@openzeppelin/contracts/utils/math/SafeCast.sol';
 import '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
+import './interfaces/IOwnable.sol';
 
 pragma solidity ^0.8.24;
 
@@ -22,6 +23,8 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
 
     mapping(uint256 orderId => Order) public orders;
     mapping(address => bool) public isForwarder;
+
+    uint16 public maxOrderAgeSeconds;
 
     constructor() {
         _disableInitializers();
@@ -35,6 +38,13 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
         FEE_ADDRESS = _feeAddr;
     }
 
+    function initializeV2(uint16 _maxOrderAgeSeconds) external reinitializer(2) {
+        if (_maxOrderAgeSeconds == 0) {
+            revert WrongParams();
+        }
+        maxOrderAgeSeconds = _maxOrderAgeSeconds;
+    }
+
     // Modifiers
     modifier onlyGov() {
         _onlyGov();
@@ -44,6 +54,17 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
     function _onlyGov() private view {
         if (msg.sender != registry.gov()) {
             revert NotGov(msg.sender);
+        }
+    }
+
+    modifier onlyTimelock() {
+        _onlyTimelock();
+        _;
+    }
+
+    function _onlyTimelock() private view {
+        if (msg.sender != IOwnable(address(registry)).owner()) {
+            revert NotTimelock(msg.sender);
         }
     }
 
@@ -64,9 +85,9 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
         }
         bytes32 feed = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(pairIndex);
 
-        orders[orderId] = Order(timestamp.toUint32(), pairIndex, orderType, true);
+        orders[orderId] = Order(timestamp.toUint32(), pairIndex, orderType, true, feed);
 
-        emit PriceRequested(orderId, feed, timestamp);
+        emit PriceRequestedV2(orderId, orderType, feed, timestamp);
     }
 
     function performUpkeep(bytes calldata performData) external {
@@ -93,21 +114,27 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
             verifierProxy.verify{value: fee.amount}(chainlinkReport, abi.encode(FEE_ADDRESS));
 
         bytes32 reportFeedId;
-        uint32 validFromTimestamp;
         uint32 observationsTimestamp;
         uint192 nativeFee;
 
         PriceUpKeepAnswer memory a;
 
-        bytes32 feedId;
         a.orderId = orderId;
         a.isDayTradingClosed = false;
-        feedId = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(order.pairIndex);
 
-        (reportFeedId, validFromTimestamp, observationsTimestamp, nativeFee,,, a.price, a.bid, a.ask) =
+        (reportFeedId,, observationsTimestamp, nativeFee,,, a.price, a.bid, a.ask) =
             abi.decode(verifierResponse, (bytes32, uint32, uint32, uint192, uint192, uint32, int192, int192, int192));
 
-        if (order.timestamp < validFromTimestamp || order.timestamp > observationsTimestamp || feedId != reportFeedId) {
+        // Backward compatibility: if feedId is not set (old orders before upgrade), fetch from storage
+        bytes32 expectedFeedId = order.feedId;
+        if (expectedFeedId == bytes32(0)) {
+            expectedFeedId = IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).pairFeed(order.pairIndex);
+        }
+
+        if (
+            expectedFeedId != reportFeedId || block.timestamp > order.timestamp + maxOrderAgeSeconds
+                || observationsTimestamp < order.timestamp
+        ) {
             revert InvalidPrice(orderId);
         }
 
@@ -135,7 +162,7 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
         delete orders[a.orderId];
     }
 
-    function registerForwarder(address forwarderAddress) public onlyGov {
+    function registerForwarder(address forwarderAddress) public onlyTimelock {
         if (isForwarder[forwarderAddress]) {
             revert AlreadyForwarder(forwarderAddress);
         }
@@ -143,7 +170,7 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
         emit ForwarderAdded(forwarderAddress);
     }
 
-    function registerForwarders(address[] calldata forwarderAddresses) external onlyGov {
+    function registerForwarders(address[] calldata forwarderAddresses) external onlyTimelock {
         for (uint256 i = 0; i < forwarderAddresses.length; i++) {
             registerForwarder(forwarderAddresses[i]);
         }
@@ -163,6 +190,14 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
         }
     }
 
+    function setMaxOrderAgeSeconds(uint16 _maxOrderAgeSeconds) external onlyGov {
+        if (_maxOrderAgeSeconds == 0) {
+            revert WrongParams();
+        }
+        maxOrderAgeSeconds = _maxOrderAgeSeconds;
+        emit MaxOrderAgeSecondsUpdated(_maxOrderAgeSeconds);
+    }
+
     function withdrawEth(address payable _to, uint256 _amount) external onlyGov {
         if (_amount == 0 || _to == address(0)) {
             revert WrongParams();
@@ -177,3 +212,4 @@ contract OstiumPriceUpKeep is IOstiumPriceUpKeep, IOstiumForwarded, IPayable, In
 
     fallback() external payable {}
 }
+

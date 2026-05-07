@@ -32,3 +32,4 @@ contract OstiumLockedDepositNft is IOstiumLockedDepositNft, ERC721Enumerable {
         _burn(tokenId);
     }
 }
+

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import './IOstiumTradingStorage.sol';
+
 pragma solidity ^0.8.24;
 
 interface IOstiumOpenPnl {
@@ -16,22 +18,30 @@ interface IOstiumOpenPnl {
         int256 epochAverageValue,
         uint256 newEpochPositiveOpenPnl
     );
+    event OpenRolloverUpdated(
+        uint16 indexed pairIndex,
+        bool indexed long,
+        int256 accTotalRollover,
+        int256 accClosedRollover,
+        uint256 currentNotional
+    );
+    event CurrentNotionalUnderflow(
+        uint16 indexed pairIndex, bool indexed long, uint256 prevCurrentNotional, uint256 notional
+    );
 
     error TooEarly();
     error WrongParams();
     error NotCallbacks(address a);
     error NotRegistryOwner(address a);
+    error NotPairInfos(address a);
 
-    function forceNewEpoch() external;
-    function newOpenPnlRequestOrEpoch() external;
-    function updateRequestsStart(uint256 newValue) external;
-    function updateRequestsEvery(uint256 newValue) external;
-    function updateRequestsCount(uint256 newValue) external;
-    function updateRequestsInfoBatch(uint256 newRequestsStart, uint256 newRequestsEvery, uint256 newRequestsCount)
-        external;
-    function updateAccTotalPnl(int256, uint256, uint256, uint256, uint16, bool, bool) external;
-
-    function getOpenPnl() external view returns (int256);
+    function getOpenPnlWithRollover() external view returns (int256);
     function lastTradePrice(uint16) external view returns (int256);
-    function nextEpochValuesRequestCount() external view returns (uint8);
+
+    // onlyCallbacks
+    function updateAccTotalPnl(int256, uint256, uint256, uint256, uint16, bool, bool) external;
+    function updateAccClosedRollover(IOstiumTradingStorage.Trade memory, uint16) external;
+
+    // onlyPairInfos
+    function updateAccTotalRollover(uint16, bool, int256, int256) external;
 }

@@ -13,4 +13,5 @@ interface IOstiumTradesUpKeep {
 
     error WrongParams();
     error NotGov(address a);
+    error NotTimelock(address a);
 }

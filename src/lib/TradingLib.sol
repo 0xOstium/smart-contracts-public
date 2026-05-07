@@ -16,6 +16,21 @@ library TradingLib {
     uint32 constant PRECISION_6 = 1e6;
     uint16 constant PERCENT_BASE = 100e2; // 100% in precision 2 and also the MAX_SLIPPAGE_P
 
+    /// @notice Returns the effective max leverage for a trade based on whether it's a day trade or overnight trade
+    /// @dev When overnightMaxLeverage is 0, all trades are overnight and use pairMaxLeverage
+    ///      When overnightMaxLeverage > 0, day trades use pairMaxLeverage, overnight trades use overnightMaxLeverage
+    /// @dev Duplicated in TradingCallbacksLib, update it there as well.
+    function getEffectiveMaxLeverage(uint16 pairIndex, bool isDayTrade, IOstiumPairsStorage pairsStorage)
+        public
+        view
+        returns (uint32)
+    {
+        uint32 overnightMaxLeverage = pairsStorage.pairOvernightMaxLeverage(pairIndex);
+        return isDayTrade
+            ? pairsStorage.pairMaxLeverage(pairIndex)
+            : (overnightMaxLeverage > 0 ? overnightMaxLeverage : pairsStorage.pairMaxLeverage(pairIndex));
+    }
+
     function getOpenTradeRevert(
         IOstiumTradingStorage storageT,
         IOstiumPairsStorage pairsStored,
@@ -23,22 +38,21 @@ library TradingLib {
         IOstiumTradingStorage.Trade memory t,
         uint256 maxAllowedCollateral,
         uint32 takerFeeP,
-        uint32 makerFeeP,
         IOstiumTradingStorage.BuilderFee memory bf
     ) external view {
         if (
             storageT.openTradesCount(sender, t.pairIndex) + storageT.pendingMarketOpenCount(sender, t.pairIndex)
-                + storageT.openLimitOrdersCount(sender, t.pairIndex) >= storageT.maxTradesPerPair()
+                    + storageT.openLimitOrdersCount(sender, t.pairIndex) >= storageT.maxTradesPerPair()
         ) revert IOstiumTrading.MaxTradesPerPairReached(sender, t.pairIndex);
 
         if (storageT.pendingOrderIdsCount(sender) >= storageT.maxPendingMarketOrders()) {
             revert IOstiumTrading.MaxPendingMarketOrdersReached(sender);
         }
 
-        if (
-            t.leverage == 0 || t.leverage < pairsStored.pairMinLeverage(t.pairIndex)
-                || t.leverage > pairsStored.pairMaxLeverage(t.pairIndex)
-        ) revert IOstiumTrading.WrongLeverage(t.leverage);
+        uint32 maxLeverage = getEffectiveMaxLeverage(t.pairIndex, t.isDayTrade, pairsStored);
+        if (t.leverage == 0 || t.leverage < pairsStored.pairMinLeverage(t.pairIndex) || t.leverage > maxLeverage) {
+            revert IOstiumTrading.WrongLeverage(t.leverage);
+        }
 
         if (t.collateral > maxAllowedCollateral) {
             revert IOstiumTrading.AboveMaxAllowedCollateral();
@@ -79,7 +93,6 @@ library TradingLib {
         IOstiumPairsStorage pairsStorage,
         address sender,
         IOstiumTradingStorage.Trade memory t,
-        IOstiumTradingStorage.TradeInfo memory i,
         uint256 triggerTimeout,
         uint16 closePercentage
     ) external view {
@@ -95,7 +108,10 @@ library TradingLib {
             revert IOstiumTrading.TriggerPending(sender, t.pairIndex, t.index);
         }
 
-        if (i.beingMarketClosed) {
+        // Backward compatibility: check old beingMarketClosed flag for pending close orders
+        // created before the PENDING_CLOSE trigger mechanism was introduced
+        IOstiumTradingStorage.TradeInfo memory i = storageT.getOpenTradeInfo(sender, t.pairIndex, t.index);
+        if (i.deprecatedBeingMarketClosed) {
             revert IOstiumTrading.AlreadyMarketClosed(sender, t.pairIndex, t.index);
         }
 
@@ -125,11 +141,9 @@ library TradingLib {
             revert IOstiumTrading.WrongSL();
         }
 
-        if (
-            !checkNoPendingTrigger(
+        if (!checkNoPendingTrigger(
                 storageT, sender, pairIndex, index, IOstiumTradingStorage.LimitOrder.OPEN, triggerTimeout
-            )
-        ) {
+            )) {
             revert IOstiumTrading.TriggerPending(sender, pairIndex, index);
         }
     }
@@ -145,11 +159,9 @@ library TradingLib {
             revert IOstiumTrading.NoLimitFound(sender, pairIndex, index);
         }
 
-        if (
-            !checkNoPendingTrigger(
+        if (!checkNoPendingTrigger(
                 storageT, sender, pairIndex, index, IOstiumTradingStorage.LimitOrder.OPEN, triggerTimeout
-            )
-        ) {
+            )) {
             revert IOstiumTrading.TriggerPending(sender, pairIndex, index);
         }
     }
@@ -181,16 +193,20 @@ library TradingLib {
             storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.TP, triggerTimeout
         )
             && checkNoPendingTrigger(
-                storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.SL, triggerTimeout
-            )
+            storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.SL, triggerTimeout
+        )
             && checkNoPendingTrigger(
-                storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.LIQ, triggerTimeout
-            )
+            storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.LIQ, triggerTimeout
+        )
             && checkNoPendingTrigger(
-                storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.CLOSE_DAY_TRADE, triggerTimeout
-            )
+            storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.CLOSE_DAY_TRADE, triggerTimeout
+        )
             && checkNoPendingTrigger(
-                storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.REMOVE_COLLATERAL, triggerTimeout
-            );
+            storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.REMOVE_COLLATERAL, triggerTimeout
+        )
+            && checkNoPendingTrigger(
+            storageT, trader, pairIndex, index, IOstiumTradingStorage.LimitOrder.PENDING_CLOSE, triggerTimeout
+        );
     }
 }
+
