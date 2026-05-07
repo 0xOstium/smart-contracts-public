@@ -107,7 +107,7 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
     function _pairOk(Pair calldata _pair) internal view {
         if (
             _pair.overnightMaxLeverage
-                > (_pair.maxLeverage != 0 ? _pair.maxLeverage : groups[_pair.groupIndex].maxLeverage)
+                    > (_pair.maxLeverage != 0 ? _pair.maxLeverage : groups[_pair.groupIndex].maxLeverage)
                 || _pair.overnightMaxLeverage != 0 && _pair.overnightMaxLeverage < groups[_pair.groupIndex].minLeverage
                 || _pair.maxLeverage > MAX_LEVERAGE
                 || (_pair.maxLeverage != 0 && _pair.maxLeverage < groups[_pair.groupIndex].minLeverage)
@@ -278,11 +278,11 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         return fees[pairs[_pairIndex].feeIndex].oracleFee;
     }
 
-    function setPairMaxLeverage(uint16 pairIndex, uint32 maxLeverage) external onlyManager {
+    function setPairMaxLeverage(uint16 pairIndex, uint32 maxLeverage) external onlyGov {
         _setPairMaxLeverage(pairIndex, maxLeverage);
     }
 
-    function setPairMaxLeverageArray(uint16[] calldata indices, uint32[] calldata values) external onlyManager {
+    function setPairMaxLeverageArray(uint16[] calldata indices, uint32[] calldata values) external onlyGov {
         uint256 len = indices.length;
         if (len != values.length) revert WrongParams();
 
@@ -293,9 +293,10 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
 
     function _setPairMaxLeverage(uint16 pairIndex, uint32 maxLeverage) private pairListed(pairIndex) {
         Pair storage p = pairs[pairIndex];
+        uint32 effectiveMaxLeverage = maxLeverage != 0 ? maxLeverage : groups[p.groupIndex].maxLeverage;
         if (
             maxLeverage > MAX_LEVERAGE || (maxLeverage != 0 && maxLeverage < groups[p.groupIndex].minLeverage)
-                || (maxLeverage != 0 && maxLeverage < p.overnightMaxLeverage)
+                || p.overnightMaxLeverage > effectiveMaxLeverage
         ) {
             revert WrongParams();
         }
@@ -303,14 +304,11 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         emit PairMaxLeverageUpdated(pairIndex, maxLeverage);
     }
 
-    function setPairOvernightMaxLeverage(uint16 pairIndex, uint32 overnightMaxLeverage) external onlyManager {
+    function setPairOvernightMaxLeverage(uint16 pairIndex, uint32 overnightMaxLeverage) external onlyGov {
         _setPairOvernightMaxLeverage(pairIndex, overnightMaxLeverage);
     }
 
-    function setPairOvernightMaxLeverageArray(uint16[] calldata indices, uint32[] calldata values)
-        external
-        onlyManager
-    {
+    function setPairOvernightMaxLeverageArray(uint16[] calldata indices, uint32[] calldata values) external onlyGov {
         uint256 len = indices.length;
         if (len != values.length) revert WrongParams();
 
@@ -319,17 +317,13 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
         }
     }
 
-    function _setPairOvernightMaxLeverage(uint16 pairIndex, uint32 overnightMaxLeverage)
-        private
-        pairListed(pairIndex)
-    {
+    function _setPairOvernightMaxLeverage(uint16 pairIndex, uint32 overnightMaxLeverage) private pairListed(pairIndex) {
         if (
             overnightMaxLeverage
-                > (
-                    pairs[pairIndex].maxLeverage != 0
-                        ? pairs[pairIndex].maxLeverage
-                        : groups[pairs[pairIndex].groupIndex].maxLeverage
-                ) || (overnightMaxLeverage != 0 && overnightMaxLeverage < groups[pairs[pairIndex].groupIndex].minLeverage)
+                    > (pairs[pairIndex].maxLeverage != 0
+                            ? pairs[pairIndex].maxLeverage
+                            : groups[pairs[pairIndex].groupIndex].maxLeverage)
+                || (overnightMaxLeverage != 0 && overnightMaxLeverage < groups[pairs[pairIndex].groupIndex].minLeverage)
         ) {
             revert WrongParams();
         }
@@ -367,12 +361,13 @@ contract OstiumPairsStorage is IOstiumPairsStorage, Initializable {
             revert WrongParams();
         }
 
-        uint32[] memory lev = new uint32[](pairsCount);
+        uint32[] memory lev = new uint32[](finalId - startId + 1);
 
         for (uint16 i = startId.toUint16(); i <= finalId.toUint16(); i++) {
-            lev[i] = pairMaxLeverage(i);
+            lev[i - startId] = pairMaxLeverage(i);
         }
 
         return lev;
     }
 }
+

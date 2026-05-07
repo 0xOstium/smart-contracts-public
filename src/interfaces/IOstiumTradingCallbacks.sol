@@ -24,7 +24,8 @@ interface IOstiumTradingCallbacks {
         NOT_HIT,
         GAIN_LOSS,
         DAY_TRADE_NOT_ALLOWED,
-        CLOSE_DAY_TRADE_NOT_ALLOWED
+        CLOSE_DAY_TRADE_NOT_ALLOWED,
+        WRONG_TRADE
     }
 
     event MarketOpenExecuted(

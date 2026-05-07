@@ -148,6 +148,7 @@ interface IOstiumPairInfos {
     error NotGov(address a);
     error NotManager(address a);
     error NotCallbacks(address a);
+    error NotGovOrManager(address a);
 
     function pairOpeningFees(uint16 pairIndex) external returns (uint32, uint32, uint32, uint16, uint16, uint8);
     function pairFundingFees(uint16 pairIndex)
@@ -233,6 +234,7 @@ interface IOstiumPairInfos {
         returns (uint256);
     function getAccFundingFeesLong(uint16 pairIndex) external view returns (int256);
     function getAccFundingFeesShort(uint16 pairIndex) external view returns (int256);
+    function getAccRollover(uint16 pairIndex, bool long) external view returns (int256);
     function getAccFundingFeesUpdateBlock(uint16 pairIndex) external view returns (uint256);
     function getTradeInitialAccRolloverFeesPerCollateral(address trader, uint16 pairIndex, uint8 index)
         external

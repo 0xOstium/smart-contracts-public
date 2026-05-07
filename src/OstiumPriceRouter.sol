@@ -72,7 +72,7 @@ contract OstiumPriceRouter is IOstiumPriceRouter, Initializable {
         onlyTrading
         returns (uint256)
     {
-        if (block.timestamp - timestamp > maxTsValidity) {
+        if (timestamp > block.timestamp || (block.timestamp - timestamp > maxTsValidity)) {
             revert WrongTimestamp();
         }
 
@@ -80,8 +80,8 @@ contract OstiumPriceRouter is IOstiumPriceRouter, Initializable {
         string memory priceUpkeepType =
             IOstiumPairsStorage(registry.getContractAddress('pairsStorage')).oracle(pairIndex);
         IOstiumPriceUpKeep(
-            payable(registry.getContractAddress(bytes32(abi.encodePacked(priceUpkeepType, 'PriceUpkeep'))))
-        ).getPrice(currentOrderId, pairIndex, orderType, timestamp);
+                payable(registry.getContractAddress(bytes32(abi.encodePacked(priceUpkeepType, 'PriceUpkeep'))))
+            ).getPrice(currentOrderId, pairIndex, orderType, timestamp);
 
         return currentOrderId;
     }

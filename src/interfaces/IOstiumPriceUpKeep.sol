@@ -25,21 +25,26 @@ interface IOstiumPriceUpKeep {
         uint16 pairIndex;
         OrderType orderType;
         bool initiated;
+        bytes32 feedId;
     }
 
     event PriceRequested(uint256 indexed orderId, bytes32 feed, uint256 timestamp);
+    event PriceRequestedV2(uint256 indexed orderId, OrderType orderType, bytes32 feed, uint256 timestamp);
     event PriceReceived(uint256 indexed orderId, uint256 indexed pairIndex, int192 price, uint256 nativeFee);
     event PendingSlOrderUnregistered(uint256 indexed orderId);
 
     error WrongParams();
     error NotGov(address a);
+    error NotTimelock(address a);
     error NotRouter(address a);
     error NotContract(address a);
     error NotInitiated(uint256 a);
     error AlreadyInitiated(uint256 a);
     error InvalidPrice(uint256 orderId);
 
-    function orders(uint256 orderId) external view returns (uint32, uint16, OrderType, bool);
+    event MaxOrderAgeSecondsUpdated(uint16 newValue);
+
+    function orders(uint256 orderId) external view returns (uint32, uint16, OrderType, bool, bytes32);
 
     // only forwarder
     function performUpkeep(bytes calldata performData) external;
@@ -47,3 +52,4 @@ interface IOstiumPriceUpKeep {
     // only price router
     function getPrice(uint256 orderId, uint16 pairIndex, OrderType orderType, uint256 timestamp) external;
 }
+
