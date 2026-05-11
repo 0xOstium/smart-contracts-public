@@ -1,5 +1,7 @@
 # Ostium V2
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/0xOstium/smart-contracts-public)
+
 This repository contains the core smart contracts for the Ostium V2 protocol and uses [Hardhat](https://github.com/NomicFoundation/hardhat) as development environment for compilation.
 
 ## What is Ostium
